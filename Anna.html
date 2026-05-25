@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anna</title>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            max-width: 800px; 
+            margin: 40px auto; 
+            padding: 20px; 
+            background-color: #f9f9f9;
+            color: #333;
+        }
+
+        #editor-view, #read-view { display: none; }
+
+        /* EDITOR STYLES */
+        #title-input { 
+            width: 100%; font-size: 24px; margin-bottom: 20px; 
+            padding: 10px; box-sizing: border-box; border: 1px solid #ccc;
+        }
+        #content-input { 
+            width: 100%; height: 600px; border: 1px solid #ccc; 
+            padding: 15px; overflow-y: auto; background: #fff; box-sizing: border-box;
+        }
+        #content-input img { max-width: 100%; height: auto; border-radius: 4px; margin: 10px 0; }
+
+        button { 
+            padding: 12px 24px; font-size: 16px; margin-top: 20px; 
+            cursor: pointer; background-color: #000; color: #fff; border: none; font-weight: bold;
+        }
+        #status-msg { margin-top: 10px; font-weight: bold; }
+
+        /* READ-ONLY STYLES */
+        #display-title { font-size: 32px; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+        #display-content { background: #fff; padding: 20px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); min-height: 600px; }
+        #display-content img { max-width: 100%; height: auto; border-radius: 4px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+    <div id="editor-view">
+        <input type="text" id="title-input" placeholder="Enter Title Here...">
+        <div id="content-input" contenteditable="true" data-placeholder="Type message, drag/drop or paste images here..."></div>
+        <button onclick="saveContent()">SAVE CONTENT</button>
+        <p id="status-msg"></p>
+    </div>
+
+    <div id="read-view">
+        <h1 id="display-title">Loading...</h1>
+        <div id="display-content">Loading content...</div>
+    </div>
+
+    <script>
+        // --- CONFIGURE THESE TWO LINES ---
+        const GITHUB_USER = 'sartik0'; // e.g., 'johndoe'
+        const GITHUB_REPO = 'anna-page';       // e.g., 'anna-page'
+        // ---------------------------------
+
+        const DATA_FILE = 'data.json';
+        const isEditMode = new URLSearchParams(window.location.search).get('mode') === 'edit';
+
+        // Toggle layout
+        if (isEditMode) {
+            document.getElementById('editor-view').style.display = 'block';
+        } else {
+            document.getElementById('read-view').style.display = 'block';
+        }
+
+        // Fetch existing data on load
+        async function loadData() {
+            try {
+                const res = await fetch(DATA_FILE + '?t=' + Date.now()); // Cache buster
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById('display-title').innerText = data.title;
+                    document.getElementById('display-content').innerHTML = data.content;
+                    document.getElementById('title-input').value = data.title;
+                    document.getElementById('content-input').innerHTML = data.content;
+                } else {
+                    document.getElementById('display-title').innerText = "Welcome";
+                    document.getElementById('display-content').innerHTML = "No content saved yet.";
+                }
+            } catch (e) {
+                console.log("No data file found yet.");
+            }
+        }
+
+        loadData();
+
+        // Safe Base64 encoding for Unicode/Emojis/Images
+        function utf8_to_b64(str) { return window.btoa(unescape(encodeURIComponent(str))); }
+
+        async function saveContent() {
+            const title = document.getElementById('title-input').value;
+            const content = document.getElementById('content-input').innerHTML;
+            const statusBox = document.getElementById('status-msg');
+
+            if (!title || !content.trim()) {
+                statusBox.style.color = "red"; statusBox.innerText = "Title and Content cannot be empty."; return;
+            }
+
+            // Secure Token Handling
+            let token = localStorage.getItem('gh_api_token');
+            if (!token) {
+                token = prompt("Enter your GitHub Personal Access Token to save:");
+                if (!token) return;
+                localStorage.setItem('gh_api_token', token);
+            }
+
+            statusBox.style.color = "blue"; statusBox.innerText = "Connecting to GitHub...";
+
+            const payloadString = JSON.stringify({ title: title, content: content });
+            const encodedData = utf8_to_b64(payloadString);
+            const apiUrl = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${DATA_FILE}`;
+
+            try {
+                // Step 1: Check if data.json already exists to get its SHA (GitHub requires this to overwrite a file)
+                let fileSha = null;
+                const checkRes = await fetch(apiUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+                if (checkRes.ok) {
+                    const fileData = await checkRes.json();
+                    fileSha = fileData.sha;
+                }
+
+                // Step 2: Push the new content
+                const commitBody = {
+                    message: "Update content via Editor",
+                    content: encodedData
+                };
+                if (fileSha) commitBody.sha = fileSha;
+
+                const putRes = await fetch(apiUrl, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(commitBody)
+                });
+
+                if (putRes.ok) {
+                    statusBox.style.color = "green"; 
+                    statusBox.innerText = "SUCCESS! Content saved. It will take ~60 seconds for GitHub to update the live URL.";
+                } else {
+                    statusBox.style.color = "red"; 
+                    statusBox.innerText = "FAILED. Your token might be wrong or expired. Resetting token...";
+                    localStorage.removeItem('gh_api_token');
+                }
+            } catch (error) {
+                statusBox.style.color = "red"; statusBox.innerText = "Network Error.";
+            }
+        }
+    </script>
+</body>
+</html>
